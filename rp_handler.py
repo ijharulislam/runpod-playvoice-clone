@@ -319,9 +319,8 @@ def handler(event):
 
         return {
             'status': 'success',
-            'spaces_url': spaces_url,
-            'input_text': input_text,
-            'word_times': word_times
+            'audio_url': spaces_url,
+            'output_text': output_text
         }
 
     except (FileNotFoundError, ValueError, RuntimeError, ClientError) as e:

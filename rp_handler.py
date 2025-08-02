@@ -4,12 +4,14 @@ import requests
 import boto3
 import runpod
 from playdiffusion import PlayDiffusion, InpaintInput
+# Import PlayDiffusion's utility
+from playdiffusion.utils.save_audio import save_audio
 from botocore.exceptions import ClientError
 from uuid import uuid4
 import io
 import mimetypes
 import numpy as np
-from scipy.io import wavfile  # For writing WAV files
+
 import tempfile
 import torch
 
@@ -185,23 +187,17 @@ def audio_inpainting(
         if output_audio.size == 0:
             raise RuntimeError(
                 f"Output audio array is empty: {output_audio.shape}")
-        if output_audio.ndim == 1:
-            # Reshape to (n_samples, 1) for mono audio
-            output_audio = output_audio.reshape(-1, 1)
-        elif output_audio.ndim != 2:
+        if output_audio.ndim not in (1, 2):
             raise RuntimeError(
                 f"Expected output_audio to be 1D or 2D, got {output_audio.ndim}D: {output_audio.shape}")
-        if output_audio.shape[1] not in (1, 2):  # Ensure mono or stereo
-            raise RuntimeError(
-                f"Expected 1 or 2 channels, got {output_audio.shape[1]}: {output_audio.shape}")
 
         # Log audio details for debugging
         print(
             f"Processed output audio shape: {output_audio.shape}, dtype: {output_audio.dtype}, Frequency: {output_frequency} Hz")
 
-        # Convert numpy.ndarray to WAV bytes using scipy.io.wavfile
+        # Convert numpy.ndarray to WAV bytes using PlayDiffusion's save_audio
         with io.BytesIO() as wav_buffer:
-            wavfile.write(wav_buffer, output_frequency, output_audio)
+            save_audio(wav_buffer, output_audio, output_frequency)
             wav_bytes = wav_buffer.getvalue()
 
         # Upload to S3 and return the URL

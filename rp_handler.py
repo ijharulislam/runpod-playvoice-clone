@@ -1,4 +1,5 @@
 import os
+import torch
 import time
 import tempfile
 import requests
@@ -10,7 +11,6 @@ from uuid import uuid4
 import io
 import mimetypes
 import numpy as np
-import torch
 import soundfile as sf  # For saving NumPy array to WAV in-memory
 
 
@@ -116,6 +116,7 @@ def audio_inpainting(
     Raises:
         FileNotFoundError: If the audio file does not exist.
         ValueError: If input parameters are invalid.
+        RuntimeError: If inpainting fails or returns an unexpected value.
     """
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -158,12 +159,32 @@ def audio_inpainting(
     )
 
     try:
-        output_frequency, output_audio = inpainter.inpaint(inpaint_input)
+        # Call inpaint and debug the output
+        inpaint_result = inpainter.inpaint(inpaint_input)
+        print(f"inpaint result: {type(inpaint_result)}, {inpaint_result}")
+
+        # Check if result is a tuple with two elements
+        if not isinstance(inpaint_result, tuple) or len(inpaint_result) != 2:
+            raise RuntimeError(
+                f"Expected inpaint to return a tuple with 2 elements (frequency, audio), got: {inpaint_result}")
+
+        output_frequency, output_audio = inpaint_result
+
+        # Validate output types
+        if not isinstance(output_frequency, int):
+            print(
+                f"Warning: output_frequency is not an integer, got {type(output_frequency)}: {output_frequency}. Using default 16000 Hz.")
+            output_frequency = 16000
+        if not isinstance(output_audio, np.ndarray):
+            raise RuntimeError(
+                f"Expected output_audio to be numpy.ndarray, got: {type(output_audio)}")
+
         # Create a temporary file path for the output audio (required by PlayDiffusion)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_output:
             output_audio_path = temp_output.name
             sf.write(output_audio, output_audio_path,
                      output_frequency, format="WAV")
+
         return output_audio_path, output_audio, output_frequency
     except Exception as e:
         raise RuntimeError(f"Failed to perform audio inpainting: {str(e)}")
@@ -259,7 +280,7 @@ def handler(event):
 
         return {
             'status': 'success',
-            'audio_url': spaces_url,
+            'spaces_url': spaces_url,
             'input_text': input_text,
             'word_times': word_times
         }

@@ -187,11 +187,9 @@ def handler(event):
                 f"Failed to download audio: HTTP {response.status_code}")
 
         # Create a temporary file for the input audio
-        audio_buffer = io.BytesIO(response.content)
-
-        temp_audio_path = "/tmp/audio.wav"
-        with open(temp_audio_path, "wb") as f:
-            f.write(audio_buffer.read())
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+            temp_audio.write(response.content)
+            temp_audio_path = temp_audio.name
 
         print(f"Audio downloaded to: {temp_audio_path}")
 

@@ -18,7 +18,7 @@ import torch
 
 def upload_to_s3(audio_data: bytes, bucket_name: str = None, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
     """
-    Upload audio data to a DigitalOcean Spaces bucket (S3-compatible), creating the bucket if it doesn't exist.
+    Upload audio data to a DigitalOcean Spaces bucket (S3-compatible) with public-read permissions, creating the bucket if it doesn't exist.
 
     Args:
         audio_data (bytes): Audio data to upload.
@@ -27,7 +27,7 @@ def upload_to_s3(audio_data: bytes, bucket_name: str = None, object_key_prefix: 
         file_extension (str): File extension for the uploaded file. Default: ".wav".
 
     Returns:
-        str: Spaces URL of the uploaded file.
+        str: Spaces URL of the uploaded file, publicly accessible.
 
     Raises:
         ValueError: If audio_data is missing or bucket_name cannot be determined.
@@ -87,7 +87,8 @@ def upload_to_s3(audio_data: bytes, bucket_name: str = None, object_key_prefix: 
             Bucket=bucket_name,
             Key=object_key,
             Body=audio_data,
-            ContentType=content_type
+            ContentType=content_type,
+            ACL='public-read'  # Make the file publicly readable
         )
         # Construct the correct public URL
         parsed_endpoint = urlparse(endpoint_url)
@@ -140,7 +141,7 @@ def audio_inpainting(
         audio_token_syllable_ratio (float): Manual audio token syllable ratio (5.0-25.0). Default: None.
 
     Returns:
-        str: Spaces URL of the uploaded inpainted audio.
+        str: Spaces URL of the uploaded inpainted audio, publicly accessible.
 
     Raises:
         FileNotFoundError: If the audio file does not exist.
@@ -272,7 +273,7 @@ def handler(event):
         input_text = input_data.get('input_text')
         output_text = input_data.get('output_text')
         word_times = input_data.get('word_times')
-        bucket_name = input_data.get('bucket_name', "denoise")  # Optional
+        bucket_name = input_data.get('bucket_name')  # Optional
         object_key_prefix = input_data.get('object_key_prefix', "")
 
         # Validate inputs

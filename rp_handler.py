@@ -4,16 +4,16 @@ import requests
 import boto3
 import runpod
 from playdiffusion import PlayDiffusion, InpaintInput
-from playdiffusion.utils.save_audio import save_audio
 from botocore.exceptions import ClientError, ConnectionClosedError
 from botocore.config import Config
 from uuid import uuid4
 import io
 import mimetypes
 import numpy as np
+from scipy.io import wavfile
 from urllib.parse import urlparse
-import torch
 import tempfile
+import torch
 
 
 def upload_to_s3(audio_data: bytes, bucket_name: str = None, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
@@ -221,13 +221,20 @@ def audio_inpainting(
             raise RuntimeError(
                 f"Expected output_audio to be 1D or 2D, got {output_audio.ndim}D: {output_audio.shape}")
 
+        # Reshape 1D array to (samples, 1) for mono audio if necessary
+        if output_audio.ndim == 1:
+            output_audio = output_audio.reshape(-1, 1)
+        elif output_audio.shape[1] not in (1, 2):
+            raise RuntimeError(
+                f"Expected 1 or 2 channels, got {output_audio.shape[1]}: {output_audio.shape}")
+
         # Log audio details for debugging
         print(
             f"Processed output audio shape: {output_audio.shape}, dtype: {output_audio.dtype}, Frequency: {output_frequency} Hz")
 
-        # Convert numpy.ndarray to WAV bytes using PlayDiffusion's save_audio
+        # Convert numpy.ndarray to WAV bytes using scipy.io.wavfile
         with io.BytesIO() as wav_buffer:
-            save_audio(wav_buffer, output_audio, output_frequency)
+            wavfile.write(wav_buffer, output_frequency, output_audio)
             wav_bytes = wav_buffer.getvalue()
 
         # Upload to S3 and return the URL
@@ -265,7 +272,7 @@ def handler(event):
         input_text = input_data.get('input_text')
         output_text = input_data.get('output_text')
         word_times = input_data.get('word_times')
-        bucket_name = input_data.get('bucket_name', 'denoise')  # Optional
+        bucket_name = input_data.get('bucket_name', "denoise")  # Optional
         object_key_prefix = input_data.get('object_key_prefix', "")
 
         # Validate inputs

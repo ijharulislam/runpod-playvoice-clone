@@ -9,8 +9,9 @@ from botocore.exceptions import ClientError
 from uuid import uuid4
 import io
 import mimetypes
+import numpy as np
 import torch
-import soundfile as sf  # For saving tensor to WAV in-memory
+import soundfile as sf  # For saving NumPy array to WAV in-memory
 
 
 def upload_to_s3(file_path: str = None, audio_data: bytes = None, bucket_name: str = None, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
@@ -91,7 +92,7 @@ def audio_inpainting(
     topk: int = 25,
     use_manual_ratio: bool = False,
     audio_token_syllable_ratio: float = None
-) -> tuple[str, torch.Tensor, int]:
+) -> tuple[str, np.ndarray, int]:
     """
     Perform audio inpainting using PlayDiffusion.
 
@@ -110,7 +111,7 @@ def audio_inpainting(
         audio_token_syllable_ratio (float): Manual audio token syllable ratio (5.0-25.0). Default: None.
 
     Returns:
-        tuple[str, torch.Tensor, int]: Path to the inpainted audio file, the audio data as a torch.Tensor, and the output frequency.
+        tuple[str, np.ndarray, int]: Path to the inpainted audio file, the audio data as a numpy.ndarray, and the output frequency.
 
     Raises:
         FileNotFoundError: If the audio file does not exist.
@@ -161,7 +162,7 @@ def audio_inpainting(
         # Create a temporary file path for the output audio (required by PlayDiffusion)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_output:
             output_audio_path = temp_output.name
-            sf.write(output_audio.cpu().numpy(), output_audio_path,
+            sf.write(output_audio, output_audio_path,
                      output_frequency, format="WAV")
         return output_audio_path, output_audio, output_frequency
     except Exception as e:
@@ -234,10 +235,9 @@ def handler(event):
         print(
             f"Inpainting completed. Output audio path: {output_audio_path}, Frequency: {output_frequency}")
 
-        # Convert torch.Tensor to WAV bytes using the output frequency
+        # Convert numpy.ndarray to WAV bytes using the output frequency
         with io.BytesIO() as wav_buffer:
-            sf.write(output_audio.cpu().numpy(), wav_buffer,
-                     output_frequency, format="WAV")
+            sf.write(output_audio, wav_buffer, output_frequency, format="WAV")
             wav_bytes = wav_buffer.getvalue()
 
         # Upload inpainted audio to DigitalOcean Spaces

@@ -9,6 +9,8 @@ from botocore.exceptions import ClientError
 from uuid import uuid4
 import io
 import mimetypes
+import torch
+import soundfile as sf  # For saving tensor to WAV in-memory
 
 
 def upload_to_s3(file_path: str = None, audio_data: bytes = None, bucket_name: str = None, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
@@ -89,7 +91,7 @@ def audio_inpainting(
     topk: int = 25,
     use_manual_ratio: bool = False,
     audio_token_syllable_ratio: float = None
-) -> tuple[str, io.BytesIO]:
+) -> tuple[str, torch.Tensor, int]:
     """
     Perform audio inpainting using PlayDiffusion.
 
@@ -108,7 +110,7 @@ def audio_inpainting(
         audio_token_syllable_ratio (float): Manual audio token syllable ratio (5.0-25.0). Default: None.
 
     Returns:
-        tuple[str, io.BytesIO]: Path to the inpainted audio file and the audio data as BytesIO.
+        tuple[str, torch.Tensor, int]: Path to the inpainted audio file, the audio data as a torch.Tensor, and the output frequency.
 
     Raises:
         FileNotFoundError: If the audio file does not exist.
@@ -155,8 +157,13 @@ def audio_inpainting(
     )
 
     try:
-        output_audio_path, output_audio = inpainter.inpaint(inpaint_input)
-        return output_audio_path, output_audio
+        output_frequency, output_audio = inpainter.inpaint(inpaint_input)
+        # Create a temporary file path for the output audio (required by PlayDiffusion)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_output:
+            output_audio_path = temp_output.name
+            sf.write(output_audio.cpu().numpy(), output_audio_path,
+                     output_frequency, format="WAV")
+        return output_audio_path, output_audio, output_frequency
     except Exception as e:
         raise RuntimeError(f"Failed to perform audio inpainting: {str(e)}")
 
@@ -217,22 +224,25 @@ def handler(event):
         print(f"Audio path: {temp_audio_path}")
 
         # Call audio inpainting with default parameters
-        output_audio_path, output_audio = audio_inpainting(
+        output_audio_path, output_audio, output_frequency = audio_inpainting(
             audio_path=temp_audio_path,
             input_text=input_text,
             output_text=output_text,
             word_times=word_times
         )
 
-        print(f"Inpainting completed. Output audio path: {output_audio_path}")
+        print(
+            f"Inpainting completed. Output audio path: {output_audio_path}, Frequency: {output_frequency}")
 
-        # Convert BytesIO to bytes for S3 upload
-        if isinstance(output_audio, io.BytesIO):
-            output_audio = output_audio.getvalue()
+        # Convert torch.Tensor to WAV bytes using the output frequency
+        with io.BytesIO() as wav_buffer:
+            sf.write(output_audio.cpu().numpy(), wav_buffer,
+                     output_frequency, format="WAV")
+            wav_bytes = wav_buffer.getvalue()
 
         # Upload inpainted audio to DigitalOcean Spaces
         spaces_url = upload_to_s3(
-            audio_data=output_audio,
+            audio_data=wav_bytes,
             bucket_name=bucket_name,
             object_key_prefix=object_key_prefix,
             file_extension=".wav"

@@ -201,7 +201,7 @@ def handler(event):
         print(f"Audio path: {temp_audio_path}")
 
         # Call audio inpainting with default parameters
-        output_audio_path = audio_inpainting(
+        output_audio_path, _ = audio_inpainting(
             audio_path=temp_audio_path,
             input_text=input_text,
             output_text=output_text,

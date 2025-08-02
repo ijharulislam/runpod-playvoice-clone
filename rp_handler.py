@@ -1,6 +1,8 @@
 import os
 import traceback
 import requests
+import tempfile
+import torch
 import boto3
 import runpod
 from playdiffusion import PlayDiffusion, InpaintInput
@@ -10,8 +12,6 @@ import io
 import mimetypes
 import numpy as np
 import soundfile as sf  # For saving NumPy array to WAV in-memory
-import tempfile
-import torch
 
 
 def upload_to_s3(audio_data: bytes, bucket_name: str, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
@@ -133,7 +133,7 @@ def audio_inpainting(
         raise ValueError("rescale must be between 0 and 1")
     if not (1 <= topk <= 10000):
         raise ValueError("topk must be between 1 and 10000")
-    if use_manual_ratio and (audio_token_syllable_ratio is None or not (5.0 <= audio_token_syllable_ratio <= 25.0)):
+    if use_manual_ratio and (audio_token_sellable_ratio is None or not (5.0 <= audio_token_syllable_ratio <= 25.0)):
         raise ValueError(
             "audio_token_syllable_ratio must be between 5.0 and 25.0 when use_manual_ratio is True")
 
@@ -178,6 +178,14 @@ def audio_inpainting(
         if not isinstance(output_audio, np.ndarray):
             raise RuntimeError(
                 f"Expected output_audio to be numpy.ndarray, got: {type(output_audio)}")
+
+        # Ensure output_audio is 2D (samples, channels) for soundfile
+        if output_audio.ndim == 1:
+            # Reshape to (n_samples, 1) for mono audio
+            output_audio = output_audio.reshape(-1, 1)
+        elif output_audio.ndim != 2:
+            raise RuntimeError(
+                f"Expected output_audio to be 1D or 2D, got {output_audio.ndim}D: {output_audio.shape}")
 
         # Log audio details for debugging
         print(
@@ -271,7 +279,7 @@ def handler(event):
 
         return {
             'status': 'success',
-            'spaces_url': spaces_url,
+            'audio_url': spaces_url,
             'input_text': input_text,
             'word_times': word_times
         }

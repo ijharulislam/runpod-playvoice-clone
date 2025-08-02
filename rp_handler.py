@@ -4,25 +4,25 @@ import requests
 import boto3
 import runpod
 from playdiffusion import PlayDiffusion, InpaintInput
-# Import PlayDiffusion's utility
 from playdiffusion.utils.save_audio import save_audio
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectionClosedError
+from botocore.config import Config
 from uuid import uuid4
 import io
 import mimetypes
 import numpy as np
-
-import tempfile
+from urllib.parse import urlparse
 import torch
+import tempfile
 
 
-def upload_to_s3(audio_data: bytes, bucket_name: str, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
+def upload_to_s3(audio_data: bytes, bucket_name: str = None, object_key_prefix: str = "", file_extension: str = ".wav") -> str:
     """
-    Upload audio data to a DigitalOcean Spaces bucket (S3-compatible).
+    Upload audio data to a DigitalOcean Spaces bucket (S3-compatible), creating the bucket if it doesn't exist.
 
     Args:
         audio_data (bytes): Audio data to upload.
-        bucket_name (str): Name of the Spaces bucket.
+        bucket_name (str, optional): Name of the Spaces bucket. If None, uses default 'denoise'.
         object_key_prefix (str): Optional prefix for the S3 object key. Default: "".
         file_extension (str): File extension for the uploaded file. Default: ".wav".
 
@@ -30,31 +30,55 @@ def upload_to_s3(audio_data: bytes, bucket_name: str, object_key_prefix: str = "
         str: Spaces URL of the uploaded file.
 
     Raises:
-        ValueError: If audio_data or bucket_name is missing.
-        ClientError: If the upload fails.
+        ValueError: If audio_data is missing or bucket_name cannot be determined.
+        ClientError: If bucket creation or upload fails due to permissions or other issues.
+        RuntimeError: If a connection error occurs during upload.
     """
     if not audio_data:
         raise ValueError("audio_data is required")
-    if not bucket_name:
-        raise ValueError("bucket_name is required")
-
-    # Determine ContentType based on file extension
-    content_type = mimetypes.guess_type(f"file{file_extension}")[
-        0] or f"audio/{file_extension.lstrip('.')}"
 
     # Use environment variables for credentials
     aws_access_key_id = os.environ.get(
         "AWS_ACCESS_KEY_ID", "DO801QRYN7XNMKV79HBC")
     aws_secret_access_key = os.environ.get(
         "AWS_SECRET_ACCESS_KEY", "inKxzsLVWYaxS3kY4R5i9MvwMRw/0h3Ym7CeHV8T6U4")
-    endpoint_url = "https://denoise.sfo3.cdn.digitaloceanspaces.com"
+    endpoint_url = os.environ.get(
+        "SPACES_ENDPOINT_URL", "https://sfo3.digitaloceanspaces.com")
 
+    # Use default bucket name if not provided
+    if not bucket_name:
+        print("Warning: bucket_name not provided. Using default bucket 'denoise'.")
+        bucket_name = "denoise"
+
+    # Configure boto3 client with retries
     s3_client = boto3.client(
         's3',
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
-        endpoint_url=endpoint_url
+        endpoint_url=endpoint_url,
+        config=Config(retries={'max_attempts': 3, 'mode': 'standard'})
     )
+
+    # Check if bucket exists, create if it doesn't
+    try:
+        s3_client.head_bucket(Bucket=bucket_name)
+        print(f"Bucket '{bucket_name}' already exists.")
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            print(f"Bucket '{bucket_name}' does not exist. Creating bucket...")
+            try:
+                s3_client.create_bucket(Bucket=bucket_name)
+                print(f"Created bucket '{bucket_name}'.")
+            except ClientError as ce:
+                raise ClientError(
+                    f"Failed to create bucket '{bucket_name}': {str(ce)}", operation_name="create_bucket")
+        else:
+            raise ClientError(
+                f"Error checking bucket '{bucket_name}': {str(e)}", operation_name="head_bucket")
+
+    # Determine ContentType based on file extension
+    content_type = mimetypes.guess_type(f"file{file_extension}")[
+        0] or f"audio/{file_extension.lstrip('.')}"
 
     object_key = f"{object_key_prefix}{uuid4()}{file_extension}" if object_key_prefix else f"{uuid4()}{file_extension}"
 
@@ -65,11 +89,19 @@ def upload_to_s3(audio_data: bytes, bucket_name: str, object_key_prefix: str = "
             Body=audio_data,
             ContentType=content_type
         )
-        print(f"Uploaded file to s3://{bucket_name}/{object_key}")
-        return f"{endpoint_url}/{bucket_name}/{object_key}"
+        # Construct the correct public URL
+        parsed_endpoint = urlparse(endpoint_url)
+        base_domain = parsed_endpoint.netloc
+        spaces_url = f"https://{bucket_name}.{base_domain}/{object_key}"
+        print(
+            f"Uploaded file to s3://{bucket_name}/{object_key}, accessible at {spaces_url}")
+        return spaces_url
     except ClientError as e:
         raise ClientError(
             f"Failed to upload to Spaces: {str(e)}", operation_name="put_object")
+    except ConnectionClosedError as e:
+        raise RuntimeError(
+            f"Connection error during S3 upload: {str(e)}\nTry checking network stability or endpoint URL.")
 
 
 def audio_inpainting(
@@ -77,7 +109,7 @@ def audio_inpainting(
     input_text: str,
     output_text: str,
     word_times: list,
-    bucket_name: str,
+    bucket_name: str = None,
     object_key_prefix: str = "",
     num_steps: int = 30,
     init_temp: float = 1.0,
@@ -96,7 +128,7 @@ def audio_inpainting(
         input_text (str): Transcribed text from the input audio.
         output_text (str): Desired output text for inpainting.
         word_times (list): List of dictionaries with word timings (e.g., [{"word": str, "start": float, "end": float}, ...]).
-        bucket_name (str): Name of the Spaces bucket.
+        bucket_name (str, optional): Name of the Spaces bucket. Default: None (will use 'denoise' in upload_to_s3).
         object_key_prefix (str): Optional prefix for the S3 object key. Default: "".
         num_steps (int): Number of sampling steps for inpainting (1-100). Default: 30.
         init_temp (float): Initial temperature (0.5-10). Default: 1.0.
@@ -121,8 +153,6 @@ def audio_inpainting(
         raise ValueError("Input and output text cannot be empty")
     if not word_times:
         raise ValueError("Word timings cannot be empty")
-    if not bucket_name:
-        raise ValueError("bucket_name is required")
     if not (1 <= num_steps <= 100):
         raise ValueError("num_steps must be between 1 and 100")
     if not (0.5 <= init_temp <= 10):
@@ -222,7 +252,7 @@ def handler(event):
 
     Args:
         event (dict): Contains the input data with 'audio_url', 'input_text', 'output_text', 'word_times',
-                      'bucket_name', and optional 'object_key_prefix'.
+                      'bucket_name' (optional), and 'object_key_prefix' (optional).
 
     Returns:
         dict: Result containing the Spaces URL of the inpainted audio or error message.
@@ -235,8 +265,7 @@ def handler(event):
         input_text = input_data.get('input_text')
         output_text = input_data.get('output_text')
         word_times = input_data.get('word_times')
-        bucket_name = input_data.get(
-            'bucket_name', "playdiffusion-inpainted-audio")
+        bucket_name = input_data.get('bucket_name', 'denoise')  # Optional
         object_key_prefix = input_data.get('object_key_prefix', "")
 
         # Validate inputs
@@ -248,8 +277,6 @@ def handler(event):
             raise ValueError("output_text is required")
         if not word_times:
             raise ValueError("word_times is required")
-        if not bucket_name:
-            raise ValueError("bucket_name is required")
 
         # Download audio to a temporary file
         print(f"Downloading audio from: {audio_url}")
@@ -268,6 +295,7 @@ def handler(event):
         print(f"Provided output text: {output_text}")
         print(f"Word times: {word_times}")
         print(f"Audio path: {temp_audio_path}")
+        print(f"Bucket name: {bucket_name}")
 
         # Perform inpainting and upload to S3
         spaces_url = audio_inpainting(

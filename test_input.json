@@ -1,5 +1,8 @@
 {
     "input": {
-        "prompt": "Hey there!"
+        "reference_audio_url": "https://example.com/reference_audio.wav",
+        "transcript": "Hello, this is a test of the text-to-speech functionality.",
+        "bucket_name": "tts-output",
+        "object_key_prefix": "tts/"
     }
 }

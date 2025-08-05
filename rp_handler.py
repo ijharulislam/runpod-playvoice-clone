@@ -268,6 +268,18 @@ def text_to_speech(
                     f"Failed to clean up temporary reference audio file: {str(e)}")
 
 
+def call_webhook(url: str, data: dict):
+    """
+    Call a webhook with the given data.
+    """
+    try:
+        response = requests.post(url, json=data)
+        print(f"Webhook response: {response.json()}")
+        return response.json()
+    except Exception as e:
+        print(f"Error calling webhook: {str(e)}")
+
+
 def handler(event):
     """
     Processes incoming requests to the Serverless endpoint for text-to-speech.
@@ -287,7 +299,11 @@ def handler(event):
         reference_audio_url = input_data.get('reference_audio_url')
         transcript = input_data.get('transcript')
         bucket_name = input_data.get('bucket_name')  # Optional
-        object_key_prefix = input_data.get('object_key_prefix', "")
+        object_key_prefix = input_data.get(
+            'object_key_prefix', "playvoice-clone")
+        userid = input_data.get('userid')
+        webhook_url = input_data.get(
+            'webhook_url', "https://voicekiller.com/api/clone/webhook/")
 
         # Validate inputs
         if not reference_audio_url:
@@ -308,6 +324,12 @@ def handler(event):
         )
 
         print(f"Uploaded TTS audio to: {spaces_url}")
+
+        data = {
+            'userid': userid,
+            'audio_url': spaces_url
+        }
+        call_webhook(webhook_url, data)
 
         return {
             'status': 'success',

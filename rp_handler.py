@@ -305,6 +305,8 @@ def handler(event):
         webhook_url = input_data.get(
             'webhook_url', "https://voicekiller.com/api/clone/webhook/")
 
+        filename = input_data.get("filename")
+
         # Validate inputs
         if not reference_audio_url:
             raise ValueError("reference_audio_url is required")
@@ -327,7 +329,8 @@ def handler(event):
 
         data = {
             'userid': userid,
-            'audio_url': spaces_url
+            'audio_url': spaces_url,
+            'filename': filename
         }
         call_webhook(webhook_url, data)
 
